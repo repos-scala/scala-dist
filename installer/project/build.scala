@@ -132,6 +132,9 @@ object ScalaDistro extends Build {
       <Media Id='1' Cabinet='scala.cab' EmbedCab='yes' />
  
       <Directory Id='TARGETDIR' Name='SourceDir'>
+        <Directory Id='ProgramMenuFolder'>
+          <Directory Id='ApplicationProgramsFolder' Name='scala'/>
+        </Directory>
         <Directory Id='ProgramFilesFolder' Name='PFiles'>
           <Directory Id='INSTALLDIR' Name='scala'>
             <Directory Id='bindir' Name='bin'>
@@ -150,7 +153,7 @@ object ScalaDistro extends Build {
                 { createDirectoryXml(dir / "src") }
               </Component>
             </Directory>
-            <Directory Id='docdir' Name='doc'>
+            <Directory Id='DOCDIRECTORY' Name='doc'>
               <!-- TODO - README -->
               <Directory Id='devel_docs_dir' Name='devel-docs'>
                 {apiDirXml}
@@ -161,6 +164,16 @@ object ScalaDistro extends Build {
           </Directory>
          </Directory>
       </Directory>
+      <DirectoryRef Id='ApplicationProgramsFolder'>
+        <Component Id='ApiShortcut' Guid='1607077c-58ca-4b4a-ac82-277a83b9360a'>
+          <Shortcut Id="ApplicationStartMenuShortcut"
+                    Name='Scala API Documentation'
+                    Description='Scala library API documentation (web)'
+                    Target="[DOCDIRECTORY]/devel-docs/api/index.html"/>
+          <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+          <RegistryValue Root='HKCU' Key='Software\Microsoft\scala' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+        </Component>
+      </DirectoryRef>
       
       <Feature Id='Complete' Title='The Scala Programming Language' Description='The windows installation of the Scala Programming Language'
          Display='expand' Level='1' ConfigurableDirectory='INSTALLDIR'>
@@ -174,6 +187,9 @@ object ScalaDistro extends Build {
         <Feature Id='fdocs' Title='Documentation for the Scala library' Description='This will install the Scala documentation.' Level='1'>
           <Feature Id='fapi' Title='API Documentation' Description='Scaladoc API html.' Level='1'>
             { for(ref <- apiIds) yield <ComponentRef Id={ref}/> }
+             <Feature Id='fapilink' Title='Start Menu link' Description='Menu shortcut to Scala API documentation.' Level='1'>
+              <ComponentRef Id='ApiShortcut'/>
+            </Feature>
           </Feature>
           <Feature Id='ftooldoc' Title='Tool documentation' Description='Manuals for scala, scalac, scaladoc, etc.' Level='1'>
             { for(ref <- tooldocIds) yield <ComponentRef Id={ref}/> }
@@ -202,9 +218,9 @@ object ScalaDistro extends Build {
                         Type="raw"
                         Win64="no"/>
       </Property>
-      <Condition Message="This application requires a JVM available.  Please install Java, then run this installer again.">
+      <!--<Condition Message="This application requires a JVM available.  Please install Java, then run this installer again.">
         <![CDATA[Installed OR JAVAVERSION]]>
-      </Condition>
+      </Condition>-->
       <MajorUpgrade 
          AllowDowngrades="no" 
          Schedule="afterInstallInitialize"
