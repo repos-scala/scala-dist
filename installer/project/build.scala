@@ -4,6 +4,7 @@ import com.typesafe.packager.Keys._
 import sbt.Keys._
 import com.typesafe.packager.PackagerPlugin._
 import collection.mutable.ArrayBuffer
+import com.typesafe.packager.windows.WixHelper._
 
 object ScalaDistro extends Build {
 
@@ -17,13 +18,13 @@ object ScalaDistro extends Build {
   val root = (Project("scala-installer", file(".")) 
               settings(packagerSettings:_*) 
               settings(
-    version := "2.10.0",
+    version := "2.9.1",
 
     // Pulling latest distro code. TODO - something useful....
     scalaDistZipLocation <<= target apply (_ / "dist"),
     scalaDistZipFile <<= sourceDirectory map { src =>
       val distdir = src / "dist"
-      IO listFiles distdir find (!_.isDirectory) getOrElse error("Please place a zipped scala distribution to package in: " + distdir.getAbsolutePath)
+      IO listFiles distdir filter (_.getName != "README") find (!_.isDirectory) getOrElse error("Please place a zipped scala distribution to package in: " + distdir.getAbsolutePath)
     },
     scalaDistDir <<= (version, scalaDistZipFile, scalaDistZipLocation) map { (v, file, dir) =>
        if(!dir.exists) dir.mkdirs()
@@ -34,7 +35,7 @@ object ScalaDistro extends Build {
          IO.unzip(file, dir)   
          IO.touch(marker)
       }
-      IO listFiles dir  find (_.isDirectory) getOrElse error("could not find scala distro from " + file.getAbsolutePath)
+      IO listFiles dir  find (_.isDirectory) getOrElse error("could not find scala distro from " + file.getAbsolutePath + ". You may need to clean the project.")
     },
     // Windows installer configuration
     name in Windows := "scala",
@@ -57,64 +58,20 @@ object ScalaDistro extends Build {
     rpmLicense := Some("BSD")
   ))
 
-
-  def createDirectoryXml(dir: File): scala.xml.Node = 
-       <xml:group>{
-         for(file <- IO.listFiles(dir).toSeq)
-         yield createFileXml(file, makeIdFromFile(file), file.getName)
-       }</xml:group>
-
-  def createFileXml(f: File, id: String, name: String): scala.xml.Node =
-     <File Id={id} Name={name} DiskId='1' Source={f.getAbsolutePath} />
-
-  def cleanStringForId(n: String) = n.replaceAll("[^0-9a-zA-Z_]", "_").takeRight(50)
-  def cleanFileName(n: String) = n.replaceAll("\\$", "\\$\\$")
-  def makeIdFromFile(f: File) = cleanStringForId(f.getName)
-  
-  /** Constructs a set of componentRefs and the directory/file WIX for
-   * all files in a given directory.
-   */
-  def generateComponentsAndDirectoryXml(dir: File, id_prefix: String =""): (Seq[String], scala.xml.Node) = {
-    def makeId(f: File) = cleanStringForId(IO.relativize(dir, f) map (id_prefix+) getOrElse f.getName)
-    def handleFile(f: File): (Seq[String], scala.xml.Node) = {
-      val id = makeId(f)
-      val xml = (
-        <Component Id={id} Guid='*'>
-          <File Id={id +"_file"} Name={cleanFileName(f.getName)} DiskId='1' Source={cleanFileName(f.getAbsolutePath)} />
-        </Component>)
-      (Seq(id), xml)
-    }
-    def handleDirectory(dir: File): (Seq[String], scala.xml.Node) = {
-      val buf: ArrayBuffer[String] = ArrayBuffer.empty
-      val xml = (
-        <Directory Id={makeId(dir)} Name={dir.getName}>
-        {  for {
-            file <- IO.listFiles(dir)
-            (ids, xml) = recursiveHelper(file)
-           } yield {
-             buf.appendAll(ids)
-             xml
-           }
-        }
-        </Directory>)
-      (buf.toSeq, xml)
-    }
-    def recursiveHelper(f: File): (Seq[String], scala.xml.Node) =
-      if(f.isDirectory) handleDirectory(f)
-      else handleFile(f)
-      
-    recursiveHelper(dir)
-  }
-  
-
   def generateWindowsXml(version: String, dir: File, winDir: File): scala.xml.Node = {
     val (libIds, libDirXml) = generateComponentsAndDirectoryXml(dir / "lib")
     val (miscIds, miscDirXml) = generateComponentsAndDirectoryXml(dir / "misc")
     val docdir = dir / "doc"
     val develdocdir = docdir / "scala-devel-docs"
+    val (binIds: Seq[String], binDirXml: scala.xml.Node) = {
+      val (idseqs, xmls) = IO.listFiles(dir / "bin").toSeq map (generateComponentsAndDirectoryXml(_, "bin_")) unzip
+      val ids: Seq[String] = idseqs.flatten
+      ids -> (<xml:group> { xmls } </xml:group>)
+    }
     val (apiIds, apiDirXml) = generateComponentsAndDirectoryXml(develdocdir / "api", "api_")
     val (exampleIds, exampleDirXml) = generateComponentsAndDirectoryXml(develdocdir / "examples", "ex_")
     val (tooldocIds, tooldocDirXml) = generateComponentsAndDirectoryXml(develdocdir / "tools", "tools_")
+    val (srcIds, srcDirXml) = generateComponentsAndDirectoryXml(dir / "src", "src_")
     
     (<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
      <Product Id='7606e6da-e168-42b5-8345-b08bf774cb30' 
@@ -122,11 +79,12 @@ object ScalaDistro extends Build {
             Language='1033'
             Version={version}
             Manufacturer='LAMP/EPFL and Typesafe, Inc.' 
-            UpgradeCode='6061c134-67c7-4fb2-aff5-32b01a186968'>
+            UpgradeCode='6061c134-67c7-4fb2-aff5-32b01a186967'>
       <Package Description='Scala Programming Language.'
                 Comments='Scala Progamming language for use in Windows.'
                 Manufacturer='LAMP/EPFL and Typesafe, Inc.' 
                 InstallerVersion='200' 
+                InstallScope='perMachine'
                 Compressed='yes'/>
  
       <Media Id='1' Cabinet='scala.cab' EmbedCab='yes' />
@@ -138,9 +96,7 @@ object ScalaDistro extends Build {
         <Directory Id='ProgramFilesFolder' Name='PFiles'>
           <Directory Id='INSTALLDIR' Name='scala'>
             <Directory Id='bindir' Name='bin'>
-              <Component Id='bin' Guid='51281af5-4e7d-4ea2-bd59-4954b23e4a57'>
-                { createDirectoryXml(dir / "bin") }  
-              </Component>
+              {binDirXml}
               <Component Id='ScalaBinPath' Guid='244b8829-bd74-40ff-8c1d-5717be94538d'>
                   <CreateFolder/>
                   <Environment Id="PATH" Name="PATH" Value="[INSTALLDIR]\bin" Permanent="no" Part="last" Action="set" System="yes" />
@@ -148,11 +104,7 @@ object ScalaDistro extends Build {
             </Directory>
             {libDirXml}
             {miscDirXml}
-            <Directory Id='srcdir' Name='src'>
-              <Component Id='srcs' Guid='7db06ab6-f1c1-423e-8d58-c6c33f3724a5'>
-                { createDirectoryXml(dir / "src") }
-              </Component>
-            </Directory>
+            {srcDirXml}
             <Directory Id='DOCDIRECTORY' Name='doc'>
               <!-- TODO - README -->
               <Directory Id='devel_docs_dir' Name='devel-docs'>
@@ -178,8 +130,7 @@ object ScalaDistro extends Build {
       <Feature Id='Complete' Title='The Scala Programming Language' Description='The windows installation of the Scala Programming Language'
          Display='expand' Level='1' ConfigurableDirectory='INSTALLDIR'>
         <Feature Id='lang' Title='The core scala language.' Level='1' Absent='disallow'>
-          <ComponentRef Id='bin'/>
-          { for(ref <- (libIds ++ miscIds)) yield <ComponentRef Id={ref}/> }
+          { for(ref <- (libIds ++ miscIds ++ binIds)) yield <ComponentRef Id={ref}/> }
         </Feature>
          <Feature Id='ScalaPathF' Title='Update system PATH' Description='This will add scala binaries (scala, scalac, scaladoc, scalap) to your windows system path.' Level='1'>
           <ComponentRef Id='ScalaBinPath'/>
@@ -199,7 +150,7 @@ object ScalaDistro extends Build {
           </Feature>
         </Feature>
         <Feature Id='fsrc' Title='Sources' Description='This will install the Scala source files for the binaries.' Level='100'>
-          <ComponentRef Id='srcs'/>
+          { for(ref <- srcIds) yield <ComponentRef Id={ref}/> }
         </Feature>
       </Feature>
       <!--<Property Id="JAVAVERSION64">
@@ -224,7 +175,7 @@ object ScalaDistro extends Build {
       <MajorUpgrade 
          AllowDowngrades="no" 
          Schedule="afterInstallInitialize"
-         DowngradeErrorMessage="A later version of [ProductName] is already installed.  Setup will no exit."/>  
+         DowngradeErrorMessage="A later version of [ProductName] is already installed.  Setup will now exit."/>  
       <UIRef Id="WixUI_FeatureTree"/>
       <UIRef Id="WixUI_ErrorProgressText"/>
       <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
